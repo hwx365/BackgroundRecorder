@@ -407,7 +407,7 @@ final class CameraRecorder: NSObject, ObservableObject {
             playbackDelegate: pipPlaybackDelegate
         )
         let controller = AVPictureInPictureController(contentSource: source)
-        controller.canStartPictureInPictureAutomaticallyFromInlinePiP = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
         controller.delegate = self
         pipController = controller
         RecorderDiagnostics.shared.log("PiP 已配置（切到后台自动弹小窗，摄像头因此保持活跃）")
@@ -730,5 +730,10 @@ private final class PiPPlaybackDelegate: NSObject, AVPictureInPictureSampleBuffe
 
     func pictureInPictureControllerIsPlaybackPausedDidChange(
         _ pictureInPictureController: AVPictureInPictureController
+    ) {}
+
+    func pictureInPictureController(
+        _ pictureInPictureController: AVPictureInPictureController,
+        didTransitionToRenderSize newRenderSize: CMVideoDimensions
     ) {}
 }
