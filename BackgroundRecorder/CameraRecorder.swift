@@ -403,10 +403,14 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             self.duration = 0
             UIApplication.shared.isIdleTimerDisabled = self.idleTimerWasDisabled
 
-            // AVError.recordingSuccessfullyFinished 表示"虽然报错但文件是好的"，不算失败
-            if let avError = error as? AVError, avError.code == .recordingSuccessfullyFinished {
-                // 正常结束
-            } else if let error {
+            // 注意：AVErrorRecordingSuccessfullyFinishedKey 是 NSError 的 userInfo key，
+            // 不是 AVError.Code。它等于 true 时表示"虽然带了 error，但文件本身是完整的"，
+            // 属于正常结束，不应该报给用户。
+            let nsError = error as NSError?
+            let finishedSuccessfully =
+                (nsError?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool) ?? false
+
+            if let error, !finishedSuccessfully {
                 self.report("录制结束异常：\(error.localizedDescription)")
             }
 

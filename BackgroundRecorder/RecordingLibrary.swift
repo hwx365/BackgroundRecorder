@@ -23,7 +23,9 @@ final class RecordingLibrary: ObservableObject {
 
     /// 录像存放目录：<沙盒>/Documents/Recordings
     /// 因为 Info.plist 打开了 UIFileSharingEnabled，用户也能在「文件」App 里直接取走
-    let directory: URL
+    ///
+    /// 标记 nonisolated：录制入口不在主线程上也要读这个路径。URL 是 Sendable 值类型，跨线程读取安全。
+    nonisolated let directory: URL
 
     private let fileManager = FileManager.default
 
@@ -35,7 +37,12 @@ final class RecordingLibrary: ObservableObject {
 
     // MARK: - 文件创建
 
-    func makeNewRecordingURL() throws -> URL {
+    /// 生成新录像文件的 URL。
+    ///
+    /// 标记 nonisolated：`CameraRecorder.startRecording()` 是同步的非主线程隔离上下文，
+    /// 需要在其中取文件名。本方法只做文件系统操作、不触碰任何 UI 状态，所以跨线程安全。
+    nonisolated func makeNewRecordingURL() throws -> URL {
+        let fileManager = FileManager.default
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
