@@ -15,6 +15,7 @@
 		A1B2C3D4E5F6000000000016 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000000000026 /* PlayerView.swift */; };
 		A1B2C3D4E5F6000000000017 /* RecordingListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000000000027 /* RecordingListView.swift */; };
 		A1B2C3D4E5F6000000000018 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6000000000028 /* Assets.xcassets */; };
+		A1B2C3D4E5F6000000000019 /* RecorderDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000002A /* RecorderDiagnostics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 		A1B2C3D4E5F6000000000027 /* RecordingListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingListView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6000000000028 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A1B2C3D4E5F6000000000029 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000002A /* RecorderDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderDiagnostics.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -63,6 +65,7 @@
 				A1B2C3D4E5F6000000000021 /* BackgroundRecorderApp.swift */,
 				A1B2C3D4E5F6000000000022 /* ContentView.swift */,
 				A1B2C3D4E5F6000000000023 /* CameraRecorder.swift */,
+				A1B2C3D4E5F600000000002A /* RecorderDiagnostics.swift */,
 				A1B2C3D4E5F6000000000024 /* CameraPreviewView.swift */,
 				A1B2C3D4E5F6000000000027 /* RecordingListView.swift */,
 				A1B2C3D4E5F6000000000026 /* PlayerView.swift */,
@@ -144,6 +147,7 @@
 			files = (
 				A1B2C3D4E5F6000000000012 /* ContentView.swift in Sources */,
 				A1B2C3D4E5F6000000000013 /* CameraRecorder.swift in Sources */,
+				A1B2C3D4E5F6000000000019 /* RecorderDiagnostics.swift in Sources */,
 				A1B2C3D4E5F6000000000014 /* CameraPreviewView.swift in Sources */,
 				A1B2C3D4E5F6000000000015 /* RecordingLibrary.swift in Sources */,
 				A1B2C3D4E5F6000000000011 /* BackgroundRecorderApp.swift in Sources */,

@@ -13,6 +13,13 @@ import UIKit
 /// 4. `movieFragmentInterval` 设为 2 秒做分片写入，这样即使进程被系统杀掉，
 ///    已经写入磁盘的部分依然是一个可播放的完整文件；
 /// 5. 额外用 `beginBackgroundTask` 做一层兜底，争取更多执行时间片。
+///
+/// ## 一条硬约束
+/// 绝对不能在 App 处于后台时调用 `session.startRunning()`。
+/// 系统会拒绝该调用，并立刻回敬一个
+/// `AVCaptureSession.InterruptionReason.videoDeviceNotAvailableInBackground`
+/// 中断 —— 这会让人误以为"系统不允许后台使用摄像头"，其实是自己踩的坑。
+/// 因此所有重启会话的入口都必须先确认 `applicationState == .active`。
 final class CameraRecorder: NSObject, ObservableObject {
 
     // MARK: - 对外发布状态
@@ -47,6 +54,9 @@ final class CameraRecorder: NSObject, ObservableObject {
         self.library = library
         super.init()
         registerObservers()
+        RecorderDiagnostics.shared.log(
+            "=== CameraRecorder 初始化 | 后台模式=\(Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") ?? "缺失") ==="
+        )
     }
 
     deinit {
@@ -75,6 +85,7 @@ final class CameraRecorder: NSObject, ObservableObject {
             self.configureSessionIfNeeded()
             self.activateAudioSession()
             if !self.session.isRunning {
+                RecorderDiagnostics.shared.log("启动采集会话")
                 self.session.startRunning()
             }
             DispatchQueue.main.async { self.isConfigured = true }
@@ -85,7 +96,10 @@ final class CameraRecorder: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.movieOutput.isRecording { self.movieOutput.stopRecording() }
-            if self.session.isRunning { self.session.stopRunning() }
+            if self.session.isRunning {
+                RecorderDiagnostics.shared.log("停止采集会话")
+                self.session.stopRunning()
+            }
         }
     }
 
@@ -103,6 +117,10 @@ final class CameraRecorder: NSObject, ObservableObject {
             applyVideoRotation()
             movieOutput.startRecording(to: url, recordingDelegate: self)
 
+            RecorderDiagnostics.shared.log(
+                "开始录制 -> \(url.lastPathComponent) | 在前台=\(UIApplication.shared.applicationState == .active)"
+            )
+
             idleTimerWasDisabled = UIApplication.shared.isIdleTimerDisabled
             UIApplication.shared.isIdleTimerDisabled = true
 
@@ -116,6 +134,9 @@ final class CameraRecorder: NSObject, ObservableObject {
 
     func stopRecording() {
         guard movieOutput.isRecording else { return }
+        RecorderDiagnostics.shared.log(
+            "手动停止录制 | 已录=\(CMTimeGetSeconds(movieOutput.recordedDuration))s"
+        )
         // 分片写入模式下，stopRecording 会立刻把 moov 补全成完整文件
         movieOutput.stopRecording()
     }
@@ -191,6 +212,10 @@ final class CameraRecorder: NSObject, ObservableObject {
         }
 
         session.commitConfiguration()
+
+        RecorderDiagnostics.shared.log(
+            "会话配置完成 | 视频输入=\(videoInput != nil) 音频输入=\(audioInput != nil) 多任务摄像头=\(session.isMultitaskingCameraAccessEnabled)"
+        )
     }
 
     private func configureFrameRate(for device: AVCaptureDevice, target: Double) {
@@ -232,6 +257,7 @@ final class CameraRecorder: NSObject, ObservableObject {
             )
             try audio.setActive(true, options: [])
         } catch {
+            RecorderDiagnostics.shared.log("音频会话配置失败: \(error.localizedDescription)")
             report("音频会话配置失败：\(error.localizedDescription)")
         }
     }
@@ -282,8 +308,21 @@ final class CameraRecorder: NSObject, ObservableObject {
             forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
+            RecorderDiagnostics.shared.log("采集中断结束")
+
+            // 只在 App 处于前台时才重启会话。
+            // 在后台调用 startRunning() 会被系统拒绝，并立刻触发
+            // videoDeviceNotAvailableInBackground 中断（见类注释里的硬约束）。
+            guard UIApplication.shared.applicationState == .active else {
+                RecorderDiagnostics.shared.log("当前在后台，推迟重启会话，等回前台再恢复")
+                return
+            }
+
             self.sessionQueue.async {
-                if !self.session.isRunning { self.session.startRunning() }
+                if !self.session.isRunning {
+                    RecorderDiagnostics.shared.log("会话未运行，正在重启")
+                    self.session.startRunning()
+                }
             }
         })
 
@@ -291,6 +330,7 @@ final class CameraRecorder: NSObject, ObservableObject {
             forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main
         ) { [weak self] note in
             let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error
+            RecorderDiagnostics.shared.log("采集运行时错误: \(error?.localizedDescription ?? "未知")")
             self?.report("采集运行时错误：\(error?.localizedDescription ?? "未知")")
         })
 
@@ -303,6 +343,15 @@ final class CameraRecorder: NSObject, ObservableObject {
 
     private func handleEnterBackground() {
         appIsInBackground = true
+        RecorderDiagnostics.shared.log(
+            "进入后台 | 录制中=\(isRecording) 会话运行=\(session.isRunning) 已录=\(movieOutput.isRecording ? CMTimeGetSeconds(movieOutput.recordedDuration) : 0)s"
+        )
+
+        // 主动刷新音频会话：系统判断"这个 App 该不该留在后台"的依据是
+        // 它是否真的在处理音频。进后台时重新激活一次，强化这个身份。
+        sessionQueue.async { [weak self] in
+            self?.activateAudioSession()
+        }
 
         // 兜底：再要一段后台执行时间，配合 audio 后台模式形成双保险
         if backgroundTask == .invalid {
@@ -317,12 +366,18 @@ final class CameraRecorder: NSObject, ObservableObject {
     private func handleEnterForeground() {
         appIsInBackground = false
         endBackgroundTask()
+        RecorderDiagnostics.shared.log(
+            "回到前台 | 录制中=\(isRecording) 会话运行=\(session.isRunning)"
+        )
 
-        // 若系统在后台停掉了会话（例如被其它 App 抢占摄像头），回前台时恢复
+        // 若系统在后台停掉了会话（被其它 App 抢占摄像头、锁屏等），回前台时恢复
         sessionQueue.async { [weak self] in
             guard let self else { return }
             self.activateAudioSession()
-            if !self.session.isRunning { self.session.startRunning() }
+            if !self.session.isRunning {
+                RecorderDiagnostics.shared.log("会话已停止，回前台后重启")
+                self.session.startRunning()
+            }
         }
     }
 
@@ -338,6 +393,10 @@ final class CameraRecorder: NSObject, ObservableObject {
             let reason = AVCaptureSession.InterruptionReason(rawValue: raw)
         else { return }
 
+        RecorderDiagnostics.shared.log(
+            "采集中断 | reason=\(raw) 在前台=\(UIApplication.shared.applicationState == .active) 录制中=\(isRecording)"
+        )
+
         switch reason {
         case .videoDeviceInUseByAnotherClient, .audioDeviceInUseByAnotherClient:
             report("摄像头被其它 App 占用，录制已中断")
@@ -346,7 +405,10 @@ final class CameraRecorder: NSObject, ObservableObject {
         case .videoDeviceNotAvailableDueToSystemPressure:
             report("设备过热，摄像头暂时不可用")
         case .videoDeviceNotAvailableInBackground:
-            report("系统不允许在后台使用摄像头，采集已停止")
+            // 多任务切换、锁屏等场景下系统会临时禁止后台使用摄像头，这是正常现象。
+            // 回到前台时 handleEnterForeground 会自动重启会话，所以只记日志，
+            // 不弹窗打断用户（否则会造成"后台录制失败"的错误印象）。
+            RecorderDiagnostics.shared.log("原因: 系统临时禁止后台摄像头，回前台自动恢复，不提示用户")
         @unknown default:
             report("采集被系统中断")
         }
@@ -402,6 +464,10 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             self.isRecording = false
             self.duration = 0
             UIApplication.shared.isIdleTimerDisabled = self.idleTimerWasDisabled
+
+            RecorderDiagnostics.shared.log(
+                "录制结束 | 文件=\(outputFileURL.lastPathComponent) error=\(error?.localizedDescription ?? "无")"
+            )
 
             // 注意：AVErrorRecordingSuccessfullyFinishedKey 是 NSError 的 userInfo key，
             // 不是 AVError.Code。它等于 true 时表示"虽然带了 error，但文件本身是完整的"，
