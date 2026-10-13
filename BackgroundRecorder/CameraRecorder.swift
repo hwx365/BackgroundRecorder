@@ -577,6 +577,9 @@ final class CameraRecorder: NSObject, ObservableObject {
             // 回到前台时 handleEnterForeground 会自动重启会话，所以只记日志，
             // 不弹窗打断用户（否则会造成"后台录制失败"的错误印象）。
             RecorderDiagnostics.shared.log("原因: 系统临时禁止后台摄像头，回前台自动恢复，不提示用户")
+        case .sensitiveContentMitigationActivated:
+            // iOS 18+ 敏感内容遮蔽（防偷拍）：系统在检测到遮蔽动作时暂停摄像头
+            RecorderDiagnostics.shared.log("原因: 系统敏感内容遮蔽触发，摄像头被临时暂停")
         @unknown default:
             report("采集被系统中断")
         }
@@ -715,10 +718,43 @@ extension CameraRecorder: AVPictureInPictureControllerDelegate {
     }
 }
 
-// MARK: - PiP 播放委托（实时流不需要播放控制逻辑，空实现即可满足协议）
+// MARK: - PiP 播放委托（实时流没有快进/暂停概念，实现成恒定"播放中"即可）
 
 private final class PiPPlaybackDelegate: NSObject, AVPictureInPictureSampleBufferPlaybackDelegate {
 
+    /// 实时流没有可回溯的时间轴，返回一个从 0 到无穷的区间
+    func pictureInPictureControllerTimeRangeForPlayback(
+        _ pictureInPictureController: AVPictureInPictureController
+    ) -> CMTimeRange {
+        CMTimeRange(
+            start: CMTime(value: 0, timescale: 600),
+            duration: CMTime.positiveInfinity
+        )
+    }
+
+    /// 实时流永远处于"播放中"
+    func pictureInPictureControllerIsPlaybackPaused(
+        _ pictureInPictureController: AVPictureInPictureController
+    ) -> Bool {
+        false
+    }
+
+    /// 实时流不支持快进/快退，直接完成回调
+    func pictureInPictureController(
+        _ pictureInPictureController: AVPictureInPictureController,
+        skipByInterval skipInterval: CMTime,
+        completion: @escaping @Sendable () -> Void
+    ) {
+        completion()
+    }
+
+    /// 同上的 async 版本（新 SDK 同时要求两个）
+    func pictureInPictureController(
+        _ pictureInPictureController: AVPictureInPictureController,
+        skipByInterval skipInterval: CMTime
+    ) async {}
+
+    // 以下是旧版协议的成员，保留空实现以兼容旧 SDK
     func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController,
         setPlaying playing: Bool
