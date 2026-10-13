@@ -24,7 +24,7 @@ struct ContentView: View {
             Color.black.ignoresSafeArea()
 
             if permissionGranted {
-                CameraPreviewView(session: recorder.session)
+                CameraPreviewView(displayLayer: recorder.previewLayer)
                     .ignoresSafeArea()
                     .overlay(alignment: .top) { topFade }
             } else if permissionChecked {

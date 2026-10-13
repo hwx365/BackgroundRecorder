@@ -1,6 +1,8 @@
 import AVFoundation
+import AVKit
 import Combine
 import CoreMedia
+import CoreVideo
 import UIKit
 
 /// 摄像头录像器。
@@ -13,6 +15,10 @@ import UIKit
 /// 4. `movieFragmentInterval` 设为 2 秒做分片写入，这样即使进程被系统杀掉，
 ///    已经写入磁盘的部分依然是一个可播放的完整文件；
 /// 5. 额外用 `beginBackgroundTask` 做一层兜底，争取更多执行时间片。
+/// 6. 真正让摄像头在后台持续出帧的关键：**画中画（PiP）**。
+///    App Store 成熟后台录像 App 的实际方案 —— 录制中把实时画面放进 PiP 小窗，
+///    小窗可见 = App 处于「使用中」状态，系统允许摄像头继续运行，录制不中断。
+///    （静音音频只能保住进程不被挂起，挡不住摄像头被中断，两者缺一不可。）
 ///
 /// ## 一条硬约束
 /// 绝对不能在 App 处于后台时调用 `session.startRunning()`。
@@ -34,6 +40,16 @@ final class CameraRecorder: NSObject, ObservableObject {
     // MARK: - 采集核心
 
     let session = AVCaptureSession()
+
+    /// 全屏预览 + 画中画内容源。
+    /// AVCaptureVideoPreviewLayer 不能作为 PiP 内容源，必须用 sample buffer 显示层，
+    /// 由 videoDataOutput 逐帧喂入。
+    let previewLayer = AVSampleBufferDisplayLayer()
+
+    private let videoDataOutput = AVCaptureVideoDataOutput()
+    private let videoDataQueue = DispatchQueue(label: "com.wxw.BackgroundRecorder.videodata")
+    private var pipController: AVPictureInPictureController?
+    private let pipPlaybackDelegate = PiPPlaybackDelegate()
 
     private let movieOutput = AVCaptureMovieFileOutput()
     private let sessionQueue = DispatchQueue(label: "com.wxw.BackgroundRecorder.session")
@@ -222,7 +238,25 @@ final class CameraRecorder: NSObject, ObservableObject {
             session.isMultitaskingCameraAccessEnabled = true
         }
 
+        // 视频数据输出：逐帧喂给 previewLayer（预览 + PiP 内容源）
+        videoDataOutput.videoSettings =
+            [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+        videoDataOutput.alwaysDiscardsLateVideoFrames = true
+        videoDataOutput.setSampleBufferDelegate(self, queue: videoDataQueue)
+        if session.canAddOutput(videoDataOutput) {
+            session.addOutput(videoDataOutput)
+            if #available(iOS 17.0, *),
+               let connection = videoDataOutput.connection(with: .video),
+               connection.isVideoRotationAngleSupported(90) {
+                // 传感器默认横置，转 90° 让送进预览层/PiP 的画面是竖直的
+                connection.videoRotationAngle = 90
+            }
+        }
+
         session.commitConfiguration()
+
+        previewLayer.videoGravity = .resizeAspectFill
+        setupPictureInPictureIfNeeded()
 
         RecorderDiagnostics.shared.log(
             "会话配置完成 | 视频输入=\(videoInput != nil) 音频输入=\(audioInput != nil) 多任务摄像头=\(session.isMultitaskingCameraAccessEnabled)"
@@ -357,6 +391,28 @@ final class CameraRecorder: NSObject, ObservableObject {
         return url
     }
 
+    // MARK: - 画中画（后台保活核心 v2）
+
+    /// App Store 成熟后台录像 App 的真实方案：录制中把实时画面放进画中画小窗。
+    /// 小窗可见 = App 处于「使用中」状态 → 系统允许摄像头继续出帧 → 录制不中断。
+    /// `canStartPictureInPictureAutomaticallyFromInlinePiP = true` 后，
+    /// 用户切走的瞬间系统自动弹出小窗，无需任何手动操作。
+    private func setupPictureInPictureIfNeeded() {
+        guard AVPictureInPictureController.isPictureInPictureSupported() else {
+            RecorderDiagnostics.shared.log("PiP 不受此设备支持（后台录制将不可靠）")
+            return
+        }
+        let source = AVPictureInPictureController.ContentSource(
+            sampleBufferDisplayLayer: previewLayer,
+            playbackDelegate: pipPlaybackDelegate
+        )
+        let controller = AVPictureInPictureController(contentSource: source)
+        controller.canStartPictureInPictureAutomaticallyFromInlinePiP = true
+        controller.delegate = self
+        pipController = controller
+        RecorderDiagnostics.shared.log("PiP 已配置（切到后台自动弹小窗，摄像头因此保持活跃）")
+    }
+
     // MARK: - 时长
 
     private func startDurationTimer() {
@@ -446,6 +502,17 @@ final class CameraRecorder: NSObject, ObservableObject {
         if isRecording, silencePlayer?.isPlaying != true {
             RecorderDiagnostics.shared.log("进后台发现静音播放停止，重新启动")
             startSilencePlayback()
+        }
+
+        // PiP 状态快照 + 2 秒后复查（自动弹窗发生在切走的瞬间，2 秒后能看清结果）
+        RecorderDiagnostics.shared.log(
+            "PiP | 支持=\(AVPictureInPictureController.isPictureInPictureSupported()) 活动=\(pipController?.isPictureInPictureActive ?? false)"
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            RecorderDiagnostics.shared.log(
+                "进后台2秒后 | PiP活动=\(self.pipController?.isPictureInPictureActive ?? false) 会话运行=\(self.session.isRunning) 录制中=\(self.movieOutput.isRecording)"
+            )
         }
 
         // 主动刷新音频会话：系统判断"这个 App 该不该留在后台"的依据是
@@ -569,6 +636,7 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             UIApplication.shared.isIdleTimerDisabled = self.idleTimerWasDisabled
 
             self.stopSilencePlayback()
+            self.pipController?.stopPictureInPicture()
 
             RecorderDiagnostics.shared.log(
                 "录制结束 | 文件=\(outputFileURL.lastPathComponent) error=\(error?.localizedDescription ?? "无")"
@@ -596,4 +664,71 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             Task { await library.refresh() }
         }
     }
+}
+
+// MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
+
+extension CameraRecorder: AVCaptureVideoDataOutputSampleBufferDelegate {
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        // 层进入 failed 状态（如来电打断后）需要 flush 才能继续接收
+        if previewLayer.status == .failed {
+            previewLayer.flush()
+        }
+        previewLayer.enqueue(sampleBuffer)
+    }
+}
+
+// MARK: - AVPictureInPictureControllerDelegate
+
+extension CameraRecorder: AVPictureInPictureControllerDelegate {
+
+    func pictureInPictureControllerDidStartPictureInPicture(
+        _ pictureInPictureController: AVPictureInPictureController
+    ) {
+        RecorderDiagnostics.shared.log("PiP 已启动 —— 画面小窗可见，摄像头保持活跃，录制不中断")
+    }
+
+    func pictureInPictureController(
+        _ pictureInPictureController: AVPictureInPictureController,
+        failedToStartPictureInPictureWithError error: Error
+    ) {
+        RecorderDiagnostics.shared.log("PiP 启动失败: \(error.localizedDescription)")
+    }
+
+    func pictureInPictureControllerDidStopPictureInPicture(
+        _ pictureInPictureController: AVPictureInPictureController
+    ) {
+        RecorderDiagnostics.shared.log("PiP 已停止")
+    }
+
+    func pictureInPictureController(
+        _ pictureInPictureController: AVPictureInPictureController,
+        restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+    ) {
+        // 用户点小窗回 App，直接完成恢复
+        completionHandler(true)
+    }
+}
+
+// MARK: - PiP 播放委托（实时流不需要播放控制逻辑，空实现即可满足协议）
+
+private final class PiPPlaybackDelegate: NSObject, AVPictureInPictureSampleBufferPlaybackDelegate {
+
+    func pictureInPictureController(
+        _ pictureInPictureController: AVPictureInPictureController,
+        setPlaying playing: Bool
+    ) {}
+
+    func pictureInPictureControllerTimeRangeDidChange(
+        _ pictureInPictureController: AVPictureInPictureController
+    ) {}
+
+    func pictureInPictureControllerIsPlaybackPausedDidChange(
+        _ pictureInPictureController: AVPictureInPictureController
+    ) {}
 }
