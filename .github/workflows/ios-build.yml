@@ -1,0 +1,85 @@
+name: Build unsigned IPA
+
+# 用途：在没有 Mac 的情况下，借 GitHub 的 macOS 机器编译出「未签名 .ipa」。
+# 下载该 ipa 后，在 Windows 上用 Sideloadly + 你的 Apple ID 重签并安装到 iPhone。
+#
+# 整个过程不需要 Mac、不需要 Apple 开发者账号、不需要配置任何证书或 Secret。
+#
+# 产物位置：Actions -> 选一次运行 -> 页面底部 Artifacts -> BackgroundRecorder-unsigned-ipa
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: xcodebuild + package ipa
+    # 需要 Xcode 15+（iOS 17 部署目标）。macos-latest 跟随 GitHub 的默认版本，
+    # 如果哪天挂了，换成 macos-15 / macos-14 即可。
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Verify Info.plist keys
+        working-directory: BackgroundRecorder
+        run: |
+          plutil -p Info.plist > /tmp/info.txt
+          cat /tmp/info.txt
+          fail=0
+          grep -q 'UIBackgroundModes' /tmp/info.txt || { echo "ERROR: 缺少 UIBackgroundModes，后台录制不会生效"; fail=1; }
+          grep -qE '[0-9]+ => "audio"' /tmp/info.txt || { echo "ERROR: UIBackgroundModes 必须包含 audio"; fail=1; }
+          for k in NSCameraUsageDescription NSMicrophoneUsageDescription NSPhotoLibraryAddUsageDescription; do
+            grep -q "$k" /tmp/info.txt || { echo "ERROR: 缺少 $k"; fail=1; }
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "Info.plist 关键键校验通过"
+
+      - name: Build (no codesign)
+        working-directory: BackgroundRecorder
+        run: |
+          xcodebuild \
+            -project BackgroundRecorder.xcodeproj \
+            -scheme BackgroundRecorder \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: BackgroundRecorder
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/BackgroundRecorder.app"
+          if [ ! -d "$APP" ]; then
+            echo "ERROR: 没找到构建产物 $APP"
+            ls -R "$RUNNER_TEMP/dd/Build/Products" || true
+            exit 1
+          fi
+          # .ipa 就是「Payload 目录 + zip」，目录名必须精确为 Payload
+          rm -rf Payload BackgroundRecorder-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry BackgroundRecorder-unsigned.ipa Payload
+          echo "--- ipa 内容 ---"
+          unzip -l BackgroundRecorder-unsigned.ipa | head -30
+          ls -lh BackgroundRecorder-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BackgroundRecorder-unsigned-ipa
+          path: BackgroundRecorder/BackgroundRecorder-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
