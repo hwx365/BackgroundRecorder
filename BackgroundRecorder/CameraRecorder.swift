@@ -739,7 +739,9 @@ private final class PiPPlaybackDelegate: NSObject, AVPictureInPictureSampleBuffe
         false
     }
 
-    /// 实时流不支持快进/快退，直接完成回调
+    /// 实时流不支持快进/快退，直接完成回调。
+    /// （async 版本由协议默认实现派生，不要显式实现，否则两个方法会映射到
+    ///  同一个 Objective-C 选择器产生冲突。）
     func pictureInPictureController(
         _ pictureInPictureController: AVPictureInPictureController,
         skipByInterval skipInterval: CMTime,
@@ -747,12 +749,6 @@ private final class PiPPlaybackDelegate: NSObject, AVPictureInPictureSampleBuffe
     ) {
         completion()
     }
-
-    /// 同上的 async 版本（新 SDK 同时要求两个）
-    func pictureInPictureController(
-        _ pictureInPictureController: AVPictureInPictureController,
-        skipByInterval skipInterval: CMTime
-    ) async {}
 
     // 以下是旧版协议的成员，保留空实现以兼容旧 SDK
     func pictureInPictureController(
