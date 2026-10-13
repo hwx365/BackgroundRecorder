@@ -6,6 +6,9 @@ name: Build unsigned IPA
 # 整个过程不需要 Mac、不需要 Apple 开发者账号、不需要配置任何证书或 Secret。
 #
 # 产物位置：Actions -> 选一次运行 -> 页面底部 Artifacts -> BackgroundRecorder-unsigned-ipa
+#
+# 目录结构注意：BackgroundRecorder.xcodeproj 在仓库根，源码在 BackgroundRecorder/ 子目录。
+# 所以下面所有命令都从仓库根执行，不要给 Build 步骤设 working-directory。
 
 on:
   push:
@@ -28,11 +31,13 @@ jobs:
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+          echo "--- 仓库根目录 ---"
+          ls -la
 
       - name: Verify Info.plist keys
-        working-directory: BackgroundRecorder
         run: |
-          plutil -p Info.plist > /tmp/info.txt
+          PLIST=BackgroundRecorder/Info.plist
+          plutil -p "$PLIST" > /tmp/info.txt
           cat /tmp/info.txt
           fail=0
           grep -q 'UIBackgroundModes' /tmp/info.txt || { echo "ERROR: 缺少 UIBackgroundModes，后台录制不会生效"; fail=1; }
@@ -44,10 +49,11 @@ jobs:
           echo "Info.plist 关键键校验通过"
 
       - name: Build (no codesign)
-        working-directory: BackgroundRecorder
         run: |
+          echo "--- 确认工程文件位置 ---"
+          ls -d BackgroundRecorder/BackgroundRecorder.xcodeproj
           xcodebuild \
-            -project BackgroundRecorder.xcodeproj \
+            -project BackgroundRecorder/BackgroundRecorder.xcodeproj \
             -scheme BackgroundRecorder \
             -configuration Release \
             -sdk iphoneos \
@@ -59,7 +65,6 @@ jobs:
             build
 
       - name: Package unsigned IPA
-        working-directory: BackgroundRecorder
         run: |
           APP="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/BackgroundRecorder.app"
           if [ ! -d "$APP" ]; then
@@ -80,6 +85,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: BackgroundRecorder-unsigned-ipa
-          path: BackgroundRecorder/BackgroundRecorder-unsigned.ipa
+          path: BackgroundRecorder-unsigned.ipa
           if-no-files-found: error
           retention-days: 30
