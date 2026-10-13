@@ -9,6 +9,8 @@ struct ContentView: View {
     @State private var permissionChecked = false
     @State private var permissionGranted = false
     @State private var showLibrary = false
+    /// 录制前的屏幕亮度，录制结束时恢复
+    @State private var originalBrightness: CGFloat?
 
     init() {
         // 让 recorder 与 library 共用同一个实例，录制结束就直接刷新列表
@@ -41,6 +43,9 @@ struct ContentView: View {
             .padding(.bottom, 30)
         }
         .task { await bootstrap() }
+        .onChange(of: recorder.isRecording) { _, recording in
+            dimScreen(recording)
+        }
         .sheet(isPresented: $showLibrary) {
             RecordingListView(library: library)
         }
@@ -176,6 +181,20 @@ struct ContentView: View {
     }
 
     // MARK: - 逻辑
+
+    /// 录制时把屏幕压到接近全黑（成熟后台录像 App 的标配：省电 + 防窥），
+    /// 停止时恢复用户原来的亮度。
+    private func dimScreen(_ dim: Bool) {
+        if dim {
+            if originalBrightness == nil {
+                originalBrightness = UIScreen.main.brightness
+            }
+            UIScreen.main.brightness = 0.05
+        } else if let brightness = originalBrightness {
+            UIScreen.main.brightness = brightness
+            originalBrightness = nil
+        }
+    }
 
     private var errorBinding: Binding<Bool> {
         Binding(

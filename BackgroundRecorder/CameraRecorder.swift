@@ -42,6 +42,14 @@ final class CameraRecorder: NSObject, ObservableObject {
     private var videoInput: AVCaptureDeviceInput?
     private var audioInput: AVCaptureDeviceInput?
 
+    /// 静音循环播放器 —— 借鉴 App Store 成熟后台录像 App 的核心保活手段。
+    ///
+    /// 系统判定「App 该不该留在后台」看的是它是否真的在处理音频。
+    /// 仅激活 AVAudioSession + 采集麦克风，信号强度不如「有一个正在播放的播放器」。
+    /// 录制期间无限循环播放一段纯静音的音频，系统就会持续认为
+    /// 「这是个正在播放音频的 App」，从而不挂起进程，摄像头也就不会断。
+    private var silencePlayer: AVAudioPlayer?
+
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var durationTimer: Timer?
     private var observers: [NSObjectProtocol] = []
@@ -120,6 +128,9 @@ final class CameraRecorder: NSObject, ObservableObject {
             RecorderDiagnostics.shared.log(
                 "开始录制 -> \(url.lastPathComponent) | 在前台=\(UIApplication.shared.applicationState == .active)"
             )
+
+            // 启动静音循环播放（成熟方案核心，见 silencePlayer 注释）
+            startSilencePlayback()
 
             idleTimerWasDisabled = UIApplication.shared.isIdleTimerDisabled
             UIApplication.shared.isIdleTimerDisabled = true
@@ -262,6 +273,90 @@ final class CameraRecorder: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - 静音循环播放（后台保活核心）
+
+    /// 启动静音循环播放。录制开始时调用。
+    private func startSilencePlayback() {
+        guard silencePlayer == nil else { return }
+
+        do {
+            let url = try makeSilentWAVFile()
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.numberOfLoops = -1   // 无限循环
+            player.volume = 0           // 双保险：内容本身是静音，音量再压到 0
+            player.prepareToPlay()
+            let playing = player.play()
+            silencePlayer = playing ? player : nil
+            RecorderDiagnostics.shared.log(
+                "静音播放启动 | 成功=\(playing) 时长=\(player.duration)s 循环中"
+            )
+        } catch {
+            RecorderDiagnostics.shared.log("静音播放创建失败: \(error.localizedDescription)")
+            // 静音播放失败不阻断录制，只损失保活强度
+        }
+    }
+
+    /// 停止静音循环播放。录制结束时调用。
+    private func stopSilencePlayback() {
+        guard let player = silencePlayer else { return }
+        player.stop()
+        silencePlayer = nil
+        RecorderDiagnostics.shared.log("静音播放停止")
+    }
+
+    /// 音频被打断（来电、Siri 等）结束后，AVAudioPlayer 不会自动续播，
+    /// 需要手动拉起来。录制期间调用。
+    private func resumeSilencePlaybackIfNeeded() {
+        guard isRecording else { return }
+        if let player = silencePlayer, !player.isPlaying {
+            let ok = player.play()
+            RecorderDiagnostics.shared.log("静音播放续播 | 成功=\(ok)")
+        } else if silencePlayer == nil {
+            startSilencePlayback()
+        }
+    }
+
+    /// 在临时目录生成一段 1 秒的静音 WAV（8kHz / 16bit / 单声道）。
+    ///
+    /// 不打包任何音频资源文件，首次调用时按需生成，之后复用。
+    /// 1 秒 8kHz 的静音 PCM 只有 16KB，循环播放的 CPU 占用可忽略。
+    private func makeSilentWAVFile() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("silence-8000hz-16bit.wav")
+
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+
+        let sampleRate = 8000
+        let seconds = 1
+        let dataBytes = sampleRate * seconds * 2   // 16bit = 2 字节/样本，单声道
+
+        var data = Data()
+        func append(_ value: UInt32) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func append16(_ value: UInt16) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+
+        data.append("RIFF".data(using: .ascii)!)
+        append(UInt32(36 + dataBytes))             // RIFF chunk size
+        data.append("WAVE".data(using: .ascii)!)
+        data.append("fmt ".data(using: .ascii)!)
+        append(16)                                 // fmt chunk size
+        append16(1)                                // PCM
+        append16(1)                                // 单声道
+        append(UInt32(sampleRate))
+        append(UInt32(sampleRate * 2))             // byteRate = rate * blockAlign
+        append16(2)                                // blockAlign
+        append16(16)                               // bits per sample
+        data.append("data".data(using: .ascii)!)
+        append(UInt32(dataBytes))
+        data.append(Data(count: dataBytes))        // 全 0 = 静音
+
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
     // MARK: - 时长
 
     private func startDurationTimer() {
@@ -344,8 +439,14 @@ final class CameraRecorder: NSObject, ObservableObject {
     private func handleEnterBackground() {
         appIsInBackground = true
         RecorderDiagnostics.shared.log(
-            "进入后台 | 录制中=\(isRecording) 会话运行=\(session.isRunning) 已录=\(movieOutput.isRecording ? CMTimeGetSeconds(movieOutput.recordedDuration) : 0)s"
+            "进入后台 | 录制中=\(isRecording) 会话运行=\(session.isRunning) 静音播放=\(silencePlayer?.isPlaying ?? false) 已录=\(movieOutput.isRecording ? CMTimeGetSeconds(movieOutput.recordedDuration) : 0)s"
         )
+
+        // 静音播放若意外停止（来电打断等），立刻拉起来——它是保活的核心
+        if isRecording, silencePlayer?.isPlaying != true {
+            RecorderDiagnostics.shared.log("进后台发现静音播放停止，重新启动")
+            startSilencePlayback()
+        }
 
         // 主动刷新音频会话：系统判断"这个 App 该不该留在后台"的依据是
         // 它是否真的在处理音频。进后台时重新激活一次，强化这个身份。
@@ -424,6 +525,8 @@ final class CameraRecorder: NSObject, ObservableObject {
             sessionQueue.async { [weak self] in
                 self?.activateAudioSession()
             }
+            // 打断结束后续播静音（AVAudioPlayer 被打断后不会自动恢复）
+            resumeSilencePlaybackIfNeeded()
         }
     }
 
@@ -464,6 +567,8 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
             self.isRecording = false
             self.duration = 0
             UIApplication.shared.isIdleTimerDisabled = self.idleTimerWasDisabled
+
+            self.stopSilencePlayback()
 
             RecorderDiagnostics.shared.log(
                 "录制结束 | 文件=\(outputFileURL.lastPathComponent) error=\(error?.localizedDescription ?? "无")"
