@@ -51,9 +51,9 @@ jobs:
       - name: Build (no codesign)
         run: |
           echo "--- 确认工程文件位置 ---"
-          ls -d BackgroundRecorder/BackgroundRecorder.xcodeproj
+          ls -d BackgroundRecorder.xcodeproj
           xcodebuild \
-            -project BackgroundRecorder/BackgroundRecorder.xcodeproj \
+            -project BackgroundRecorder.xcodeproj \
             -scheme BackgroundRecorder \
             -configuration Release \
             -sdk iphoneos \
