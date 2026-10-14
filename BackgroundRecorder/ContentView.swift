@@ -3,20 +3,34 @@ import SwiftUI
 
 @MainActor
 struct ContentView: View {
+
     @StateObject private var library: RecordingLibrary
+    @StateObject private var settings: RecordingSettings
     @StateObject private var recorder: CameraRecorder
 
     @State private var permissionChecked = false
     @State private var permissionGranted = false
     @State private var showLibrary = false
-    /// 录制前的屏幕亮度，录制结束时恢复
+    @State private var showSettings = false
+    /// 录制前的屏幕亮度，结束后恢复
     @State private var originalBrightness: CGFloat?
 
+    /// 隐身模式下控件是否被临时唤出
+    @State private var controlsRevealed = false
+    /// 用于作废上一次的自动隐藏
+    @State private var revealGeneration = 0
+
     init() {
-        // 让 recorder 与 library 共用同一个实例，录制结束就直接刷新列表
         let library = RecordingLibrary()
+        let settings = RecordingSettings()
         _library = StateObject(wrappedValue: library)
-        _recorder = StateObject(wrappedValue: CameraRecorder(library: library))
+        _settings = StateObject(wrappedValue: settings)
+        _recorder = StateObject(wrappedValue: CameraRecorder(library: library, settings: settings))
+    }
+
+    /// 隐身状态：开关打开 + 正在录制 + 控件未唤出
+    private var stealthActive: Bool {
+        settings.stealthMode && recorder.isRecording && !controlsRevealed
     }
 
     var body: some View {
@@ -33,21 +47,25 @@ struct ContentView: View {
                 ProgressView().tint(.white)
             }
 
-            VStack(spacing: 0) {
-                statusBar
-                Spacer()
-                controlBar
+            if stealthActive {
+                stealthOverlay
+            } else {
+                controlsLayer
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 10)
-            .padding(.bottom, 30)
         }
         .task { await bootstrap() }
         .onChange(of: recorder.isRecording) { _, recording in
-            dimScreen(recording)
+            if !recording { controlsRevealed = false }
+            applyBrightness()
         }
+        .onChange(of: controlsRevealed) { _, _ in applyBrightness() }
+        .onChange(of: settings.stealthMode) { _, _ in applyBrightness() }
+        .onChange(of: settings.quality) { _, _ in recorder.applyQualitySetting() }
         .sheet(isPresented: $showLibrary) {
             RecordingListView(library: library)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(settings: settings, library: library)
         }
         .alert("提示", isPresented: errorBinding) {
             Button("好", role: .cancel) { recorder.errorMessage = nil }
@@ -56,7 +74,57 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 顶部
+    // MARK: - 隐身模式
+
+    /// 全黑覆盖层：轻点唤出控件，长按 1.2 秒停止录制。
+    /// 参考同类 App（QuietCam / NoCam）的「隐身模式」，但额外做了防误触 ——
+    /// 放在口袋里蹭到屏幕不会把录制停掉。
+    private var stealthOverlay: some View {
+        Color.black
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture { revealControls() }
+            .onLongPressGesture(minimumDuration: 1.2) {
+                controlsRevealed = true
+                recorder.stopRecordingByUser()
+            }
+            .overlay(alignment: .topTrailing) {
+                // 极暗的红点：表示正在录制。长按可停，但先要有可见的录制状态
+                Circle()
+                    .fill(.red.opacity(0.22))
+                    .frame(width: 6, height: 6)
+                    .padding(16)
+            }
+            .overlay(alignment: .bottom) {
+                Text("轻点唤出控件 · 长按 1.2 秒停止")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.16))
+                    .padding(.bottom, 24)
+            }
+    }
+
+    private func revealControls() {
+        controlsRevealed = true
+        revealGeneration += 1
+        let generation = revealGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            if revealGeneration == generation { controlsRevealed = false }
+        }
+    }
+
+    // MARK: - 常规界面
+
+    private var controlsLayer: some View {
+        VStack(spacing: 0) {
+            statusBar
+            notices
+            Spacer()
+            controlBar
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 10)
+        .padding(.bottom, 30)
+    }
 
     private var topFade: some View {
         LinearGradient(
@@ -78,6 +146,11 @@ struct ContentView: View {
                     Text(RecordingLibrary.formattedDuration(recorder.duration))
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold))
                         .foregroundStyle(.white)
+                    if settings.segment != .unlimited {
+                        Text("第 \(recorder.segmentIndex) 段")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
@@ -86,21 +159,60 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
+            if permissionGranted, !recorder.isRecording {
+                if recorder.torchAvailable {
+                    circleButton(
+                        system: recorder.torchOn ? "flashlight.on.fill" : "flashlight.off.fill",
+                        tint: recorder.torchOn ? .yellow : .white
+                    ) {
+                        recorder.toggleTorch()
+                    }
+                }
+                circleButton(system: "arrow.triangle.2.circlepath.camera") {
+                    recorder.switchCamera()
+                }
+            }
+
             Label(
-                recorder.appIsInBackground ? "后台录制中" : "前台",
-                systemImage: recorder.appIsInBackground ? "moon.stars.fill" : "sun.max.fill"
+                recorder.appIsInBackground ? "已切走" : "录制中",
+                systemImage: recorder.appIsInBackground ? "exclamationmark.triangle.fill" : "video.fill"
             )
             .font(.caption2.weight(.medium))
             .padding(.horizontal, 11)
             .padding(.vertical, 7)
             .background(.ultraThinMaterial, in: Capsule())
-            .foregroundStyle(recorder.appIsInBackground ? Color.green : Color.white)
+            .foregroundStyle(recorder.appIsInBackground ? Color.orange : Color.white)
+            .opacity(recorder.isRecording ? 1 : 0.55)
         }
         .animation(.snappy, value: recorder.isRecording)
         .animation(.snappy, value: recorder.appIsInBackground)
     }
 
-    // MARK: - 底部
+    /// 自动降级 / 存储提示
+    private var notices: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let notice = recorder.downgradeNotice {
+                noticeRow(notice, icon: "thermometer.medium", color: .orange)
+            }
+            if let notice = recorder.storageNotice {
+                noticeRow(notice, icon: "externaldrive.badge.exclamationmark", color: .yellow)
+            }
+        }
+        .padding(.top, 10)
+        .animation(.snappy, value: recorder.downgradeNotice)
+        .animation(.snappy, value: recorder.storageNotice)
+    }
+
+    private func noticeRow(_ text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.caption2)
+            Text(text).font(.caption2)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .foregroundStyle(color)
+    }
 
     private var controlBar: some View {
         HStack {
@@ -142,18 +254,30 @@ struct ContentView: View {
             Spacer()
 
             Button {
-                recorder.switchCamera()
+                showSettings = true
             } label: {
-                Image(systemName: "arrow.triangle.2.circlepath.camera")
+                Image(systemName: "gearshape.fill")
                     .font(.title3)
                     .foregroundStyle(.white)
                     .frame(width: 62, height: 62)
                     .background(.ultraThinMaterial, in: Circle())
             }
-            .disabled(recorder.isRecording || !permissionGranted)
-            .opacity(recorder.isRecording ? 0.35 : 1)
         }
         .animation(.snappy, value: recorder.isRecording)
+    }
+
+    private func circleButton(
+        system: String,
+        tint: Color = .white,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.subheadline)
+                .foregroundStyle(tint)
+                .frame(width: 36, height: 36)
+                .background(.ultraThinMaterial, in: Circle())
+        }
     }
 
     // MARK: - 无权限占位
@@ -182,18 +306,21 @@ struct ContentView: View {
 
     // MARK: - 逻辑
 
-    /// 录制时把屏幕压到接近全黑（成熟后台录像 App 的标配：省电 + 防窥），
+    /// 录制时压低屏幕亮度：隐身模式归零（看起来像息屏），普通模式保留极低亮度。
     /// 停止时恢复用户原来的亮度。
-    private func dimScreen(_ dim: Bool) {
-        if dim {
-            if originalBrightness == nil {
-                originalBrightness = UIScreen.main.brightness
+    private func applyBrightness() {
+        guard recorder.isRecording else {
+            if let brightness = originalBrightness {
+                UIScreen.main.brightness = brightness
+                originalBrightness = nil
             }
-            UIScreen.main.brightness = 0.05
-        } else if let brightness = originalBrightness {
-            UIScreen.main.brightness = brightness
-            originalBrightness = nil
+            return
         }
+
+        if originalBrightness == nil {
+            originalBrightness = UIScreen.main.brightness
+        }
+        UIScreen.main.brightness = stealthActive ? 0.0 : 0.05
     }
 
     private var errorBinding: Binding<Bool> {

@@ -48,9 +48,31 @@ App Store 上标榜「后台录像」的应用，商店页大多写着**「专�
 
 ---
 
-## 二、功能列表
+## 二、比同类 App 多做了什么
+
+调研了 App Store 上同品类的应用（QuietCam 黑屏相机、NoCam 暗影摄像机、Video Background Recorder 等）。
+它们在 iPhone 上做的都是「前台录制 + 黑屏伪装」——没人能真正后台录像。它们的差异点集中在黑屏界面、
+防误触、画质选择、闪光灯。**但它们普遍没做好长时间录制最需要的三件事**，本 App 补齐了：
+
+| 能力 | 同类 App | 本 App |
+| --- | --- | --- |
+| 循环分段 | 少见 | 每 5/10/30/60 分钟自动切段，任何一段损坏不影响其他段 |
+| **中断自动续录** | 几乎没有 | 被来电/其它 App 打断后，回到 App **自动接着录新一段**，录制不会因一次中断彻底结束 |
+| 容量自管理 | 少见 | 超出上限自动淘汰最旧文件（行车记录仪式循环覆盖）；空间不足提前停止 |
+| 过热/低电量适配 | 少见 | 自动降画质（1080p→720p→480p），降低负载 |
+| 防误触 | 部分有 | 长按 1.2 秒才停止，口袋误触不会中断录制 |
+| 诊断可观测 | 无 | 内置 `diagnostics.log`，记录每次中断原因与会话状态 |
+
+---
+
+## 三、功能列表
 
 - [x] 纯视频录制（不采集音频，`.mov` 无音轨）
+- [x] **隐身模式**：录制时全屏纯黑 + 亮度归零，轻点唤出控件，**长按 1.2 秒**停止
+- [x] **循环分段**：按 5/10/30/60 分钟自动切段并续录
+- [x] **中断自动续录**：被系统中断后回到 App 自动接续（可关闭）
+- [x] **容量上限与循环覆盖**：超出自动删最旧，空间不足提前停止
+- [x] **画质可选**（1080p / 720p / 480p），低电量或过热时自动降档
 - [x] 录制期间屏幕亮度降至 5%，停止后恢复原亮度
 - [x] 实时取景预览（`AVCaptureVideoPreviewLayer`）
 - [x] 红点 + 计时器，顶部显示「前台 / 后台」状态
@@ -65,7 +87,7 @@ App Store 上标榜「后台录像」的应用，商店页大多写着**「专�
 
 ---
 
-## 三、跑起来
+## 四、跑起来
 
 ### 环境要求
 
@@ -106,35 +128,39 @@ python tools/gh_api_push.py          # 默认推 hwx365/BackgroundRecorder 的 m
 
 ---
 
-## 四、验证录制是否正常
+## 五、验证录制是否正常
 
 1. 打开 App，授予**相机**权限
 2. 点红色按钮开始录制，屏幕应立刻变暗，计时开始走
-3. 录制过程中**不要切走**（切走会立即结束，属系统限制）
+3. 录制过程中**不要切走**（切走会立即结束当前段，回到 App 会自动续录下一段）
 4. 停止后进列表播放，检查画面连续、时长正确
 5. 想验证分片写入：录制中强制结束 App，重开后该文件应仍可播放
+6. 想验证自动续录：录制中切走 1 分钟再回来，列表里应出现「第 2 段」文件，日志中会有
+   `回前台自动续录 -> 第 2 段`
 
 **诊断日志**（`文件` App → 我的 iPhone → 后台录像 → `diagnostics.log`）会记录每次
 前后台切换、中断原因、会话启停，排查问题看这里最快。
 
 ---
 
-## 五、代码结构
+## 六、代码结构
 
 ```
 BackgroundRecorder/
 ├── BackgroundRecorder.xcodeproj/
-├── .github/workflows/ios-build.yml     # CI：无签名 ipa 构建
-├── tools/gh_api_push.py                # 网络受限时的推送方案
+├── .github/workflows/ios-build.yml     # CI：无签名 ipa 构建（含 Info.plist 断言）
+├── tools/gh_api_push.py                # 网络受限时的推送方案（REST API 代替 git push）
 ├── project.yml                         # XcodeGen 备用描述
 └── BackgroundRecorder/
     ├── BackgroundRecorderApp.swift     # @main 入口
-    ├── ContentView.swift               # 首页：预览 + 状态 + 录制按钮 + 屏幕调暗
-    ├── CameraRecorder.swift            # ★ 核心：采集会话、录制、中断处理
+    ├── ContentView.swift               # 首页：预览、状态、隐身模式覆盖层、录制按钮
+    ├── CameraRecorder.swift            # ★ 核心：采集、分段、续录、降级、手电筒
+    ├── RecordingSettings.swift         # 设置模型（画质/分段/容量/行为），持久化
+    ├── SettingsView.swift              # 设置界面
     ├── CameraPreviewView.swift         # AVCaptureVideoPreviewLayer 包装
     ├── RecordingListView.swift         # 录像列表
     ├── PlayerView.swift                # AVKit 播放器
-    ├── RecordingLibrary.swift          # 文件扫描 / 删除 / 存相册 / 格式化
+    ├── RecordingLibrary.swift          # 文件扫描 / 删除 / 容量管理 / 存相册
     ├── RecorderDiagnostics.swift       # 诊断日志
     ├── Info.plist                      # 仅相机权限，无后台模式
     └── Assets.xcassets/
@@ -142,7 +168,7 @@ BackgroundRecorder/
 
 ---
 
-## 六、后续可做
+## 七、后续可做
 
 - **循环录制（行车记录仪模式）**：`movieOutput.maxRecordedDuration` 设 5 分钟，在
   `didFinishRecordingTo` 里自动续录，按总容量淘汰旧文件
@@ -152,6 +178,6 @@ BackgroundRecorder/
 
 ---
 
-## 七、免责
+## 八、免责
 
 请遵守当地法律法规，尊重他人隐私，不要在公共场所或他人不知情的情况下进行隐蔽拍摄。
