@@ -8,6 +8,8 @@ struct ContentView: View {
     @StateObject private var settings: RecordingSettings
     @StateObject private var recorder: CameraRecorder
 
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var permissionChecked = false
     @State private var permissionGranted = false
     @State private var showLibrary = false
@@ -53,6 +55,11 @@ struct ContentView: View {
                 controlsLayer
             }
         }
+        // 状态栏（信号 / 时间 / 电量）与底部 Home 指示条由 **系统** 绘制在 App 视图层级之上，
+        // 用 Color.black 覆盖层是盖不住的，只能让系统自己关掉。
+        // 保持「唤出控件时恢复、自动隐藏后再次关闭」的节奏与亮度调节一致。
+        .statusBarHidden(stealthActive)
+        .persistentSystemOverlays(stealthActive ? .hidden : .automatic)
         .task { await bootstrap() }
         .onChange(of: recorder.isRecording) { _, recording in
             if !recording { controlsRevealed = false }
@@ -60,6 +67,16 @@ struct ContentView: View {
         }
         .onChange(of: controlsRevealed) { _, _ in applyBrightness() }
         .onChange(of: settings.stealthMode) { _, _ in applyBrightness() }
+        .onChange(of: scenePhase) { _, phase in
+            // 隐身模式下亮度被压到 0，此时若进程被系统回收或用户上滑清掉，
+            // 恢复代码就不会执行，手机会一直停在 0 亮度（看起来像坏了）。
+            // 所以一进入后台就先把亮度还回去；回到前台再重新压暗。
+            if phase == .background {
+                restoreBrightness()
+            } else if phase == .active {
+                applyBrightness()
+            }
+        }
         .onChange(of: settings.quality) { _, _ in recorder.applyQualitySetting() }
         .onChange(of: settings.recordAudio) { _, _ in recorder.applyAudioSetting() }
         .sheet(isPresented: $showLibrary) {
@@ -315,10 +332,7 @@ struct ContentView: View {
     /// 停止时恢复用户原来的亮度。
     private func applyBrightness() {
         guard recorder.isRecording else {
-            if let brightness = originalBrightness {
-                UIScreen.main.brightness = brightness
-                originalBrightness = nil
-            }
+            restoreBrightness()
             return
         }
 
@@ -326,6 +340,13 @@ struct ContentView: View {
             originalBrightness = UIScreen.main.brightness
         }
         UIScreen.main.brightness = stealthActive ? 0.0 : 0.05
+    }
+
+    /// 把亮度还原成用户原来的值。可重复调用（已还原过就什么都不做）。
+    private func restoreBrightness() {
+        guard let brightness = originalBrightness else { return }
+        UIScreen.main.brightness = brightness
+        originalBrightness = nil
     }
 
     private var errorBinding: Binding<Bool> {
