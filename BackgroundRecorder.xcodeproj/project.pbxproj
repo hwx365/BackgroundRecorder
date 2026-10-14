@@ -19,6 +19,7 @@
 		A1B2C3D4E5F600000000001A /* RecordingSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000002B /* RecordingSettings.swift */; };
 		A1B2C3D4E5F600000000001B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000002C /* SettingsView.swift */; };
 		A1B2C3D4E5F600000000001C /* RecordingIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000002D /* RecordingIntents.swift */; };
+		A1B2C3D4E5F600000000001D /* StealthGestureLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000002E /* StealthGestureLayer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		A1B2C3D4E5F600000000002B /* RecordingSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSettings.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F600000000002C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F600000000002D /* RecordingIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingIntents.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000002E /* StealthGestureLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StealthGestureLayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +76,7 @@
 				A1B2C3D4E5F600000000002B /* RecordingSettings.swift */,
 				A1B2C3D4E5F600000000002C /* SettingsView.swift */,
 				A1B2C3D4E5F600000000002D /* RecordingIntents.swift */,
+				A1B2C3D4E5F600000000002E /* StealthGestureLayer.swift */,
 				A1B2C3D4E5F6000000000024 /* CameraPreviewView.swift */,
 				A1B2C3D4E5F6000000000027 /* RecordingListView.swift */,
 				A1B2C3D4E5F6000000000026 /* PlayerView.swift */,
@@ -160,6 +163,7 @@
 				A1B2C3D4E5F600000000001B /* SettingsView.swift in Sources */,
 				A1B2C3D4E5F600000000001C /* RecordingIntents.swift in Sources */,
 				A1B2C3D4E5F6000000000019 /* RecorderDiagnostics.swift in Sources */,
+				A1B2C3D4E5F600000000001D /* StealthGestureLayer.swift in Sources */,
 				A1B2C3D4E5F6000000000014 /* CameraPreviewView.swift in Sources */,
 				A1B2C3D4E5F6000000000015 /* RecordingLibrary.swift in Sources */,
 				A1B2C3D4E5F6000000000011 /* BackgroundRecorderApp.swift in Sources */,
