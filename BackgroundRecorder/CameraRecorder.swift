@@ -248,7 +248,7 @@ final class CameraRecorder: NSObject, ObservableObject {
             case .critical:
                 quality = .vga
                 notice = "机身过热：已自动切换为 480p"
-            case .nominal, .unknown:
+            case .nominal:
                 break
             @unknown default:
                 break
