@@ -17,13 +17,11 @@ struct ContentView: View {
     /// 录制前的屏幕亮度，结束后恢复
     @State private var originalBrightness: CGFloat?
 
-    /// 隐身模式下控件是否被临时唤出
-    @State private var controlsRevealed = false
-    /// 用于作废上一次的自动隐藏
-    @State private var revealGeneration = 0
+    /// 隐身覆盖层是否已被主动解除（只有「停止录像」才会置为 true）
+    @State private var stealthDismissed = false
 
-    /// 隐身模式手势计数，由 `StealthGestureLayer` 自增（UIKit 手势识别器不能直接改 @State）
-    @State private var revealRequest = 0
+    /// 双指长按成功次数，由 `StealthGestureLayer` 自增
+    ///（UIKit 手势识别器不能直接改 @State，只能写 Binding）
     @State private var stealthExitRequest = 0
 
     init() {
@@ -34,9 +32,12 @@ struct ContentView: View {
         _recorder = StateObject(wrappedValue: CameraRecorder(library: library, settings: settings))
     }
 
-    /// 隐身状态：开关打开 + 正在录制 + 控件未唤出
+    /// 隐身状态：开关打开 + 正在录制 + 尚未解除。
+    ///
+    /// 录制期间这个值会**一直保持 true** —— 没有任何轻点/滑动能暂时揭开黑屏，
+    /// 唯一的出口是「双指长按 3 秒」或侧边「操作按钮」停止录像。
     private var stealthActive: Bool {
-        settings.stealthMode && recorder.isRecording && !controlsRevealed
+        settings.stealthMode && recorder.isRecording && !stealthDismissed
     }
 
     var body: some View {
@@ -61,7 +62,7 @@ struct ContentView: View {
         }
         // 状态栏（信号 / 时间 / 电量）与底部 Home 指示条由 **系统** 绘制在 App 视图层级之上，
         // 用 Color.black 覆盖层是盖不住的，只能让系统自己关掉。
-        // 保持「唤出控件时恢复、自动隐藏后再次关闭」的节奏与亮度调节一致。
+        // 与亮度调节同步：录制期间一直隐藏，退出隐身时和亮度一起恢复。
         .statusBarHidden(stealthActive)
         .persistentSystemOverlays(stealthActive ? .hidden : .automatic)
         // 录制期间「让位」系统手势：从屏幕边缘上滑的**第一次**手势由 App 接管，
@@ -70,12 +71,11 @@ struct ContentView: View {
         .defersSystemGestures(on: recorder.isRecording ? .all : [])
         .task { await bootstrap() }
         .onChange(of: recorder.isRecording) { _, recording in
-            if !recording { controlsRevealed = false }
+            if !recording { stealthDismissed = false }
             applyBrightness()
         }
-        .onChange(of: controlsRevealed) { _, _ in applyBrightness() }
+        .onChange(of: stealthDismissed) { _, _ in applyBrightness() }
         .onChange(of: settings.stealthMode) { _, _ in applyBrightness() }
-        .onChange(of: revealRequest) { _, _ in revealControls() }
         .onChange(of: stealthExitRequest) { _, _ in exitStealth() }
         // 屏幕全黑且亮度为 0，没有任何视觉反馈，用一次震动确认「双指长按」已被识别
         .sensoryFeedback(.success, trigger: stealthExitRequest)
@@ -106,25 +106,25 @@ struct ContentView: View {
 
     // MARK: - 隐身模式
 
-    /// 全黑覆盖层。三种退出/操作方式，全部刻意做得难以误触：
+    /// 全黑覆盖层 —— 黑屏期间屏幕对内**完全无响应**。
     ///
     /// | 操作 | 效果 |
     /// | --- | --- |
-    /// | 轻点一下 | 临时唤出控件，6 秒后自动收起 |
+    /// | 单指轻点 / 滑动 | **什么都不发生** |
     /// | **双指长按 3 秒** | 停止录像、退出隐身（口袋里不可能做出来） |
     /// | 侧边「操作按钮」 | 走快捷指令停止录像（不依赖屏幕，见 `RecordingIntents`） |
     ///
-    /// 手势在 `StealthGestureLayer` 里用 UIKit 实现 —— SwiftUI 的 `onLongPressGesture`
-    /// 无法要求「两指同时按住」，而单指长按在口袋里极易误触，误触的代价就是停录。
+    /// 连「轻点唤出控件」也去掉了：任何单指可触发的响应，在口袋里都会被误触 ——
+    /// 轻则亮屏暴露、重则直接停录。黑屏就该是彻底的黑屏，出口只有那两个需要刻意做出的动作。
+    ///
+    /// 双指长按在 `StealthGestureLayer` 里用 UIKit 实现 —— SwiftUI 的 `onLongPressGesture`
+    /// 无法要求「两指同时按住」。
     private var stealthOverlay: some View {
         Color.black
             .ignoresSafeArea()
             .overlay {
-                StealthGestureLayer(
-                    tapCount: $revealRequest,
-                    exitCount: $stealthExitRequest
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                StealthGestureLayer(exitCount: $stealthExitRequest)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .overlay(alignment: .topTrailing) {
                 // 极暗的红点：表示正在录制
@@ -135,7 +135,7 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
             .overlay(alignment: .bottom) {
-                Text("轻点唤出控件 · 双指长按 3 秒停止")
+                Text("双指长按 3 秒停止")
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.16))
                     .padding(.bottom, 24)
@@ -147,17 +147,8 @@ struct ContentView: View {
     private func exitStealth() {
         // 先把界面亮回来：停止录制时文件要收尾（写入 moov 索引），
         // 这期间如果还是全黑，会让人以为「按了没反应」而反复长按。
-        controlsRevealed = true
+        stealthDismissed = true
         recorder.stopRecordingByUser()
-    }
-
-    private func revealControls() {
-        controlsRevealed = true
-        revealGeneration += 1
-        let generation = revealGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-            if revealGeneration == generation { controlsRevealed = false }
-        }
     }
 
     // MARK: - 常规界面
