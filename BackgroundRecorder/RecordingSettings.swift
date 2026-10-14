@@ -109,7 +109,7 @@ final class RecordingSettings: ObservableObject {
     /// 是否录制声音（需要麦克风权限）。关闭后录出的是无音轨的纯视频
     @Published var recordAudio: Bool { didSet { save() } }
 
-    /// 隐身模式：录制时全屏纯黑 + 亮度归零，长按才能停止
+    /// 隐身模式：录制时全屏纯黑 + 亮度归零，双指长按 3 秒才能停止
     @Published var stealthMode: Bool { didSet { save() } }
     /// 被系统中断后，回到前台自动接着录（新起一段）
     @Published var autoResume: Bool { didSet { save() } }
