@@ -52,6 +52,16 @@ struct SettingsView: View {
                          + "中断后自动续录：被来电或其它 App 打断后，回到本 App 会自动接着录新的一段。")
                 }
 
+                Section {
+                    Text("已内置 3 个快捷指令动作：「开始录像」「停止录像」「开始或停止录像」。\n"
+                         + "绑定到侧边「操作按钮」：设置 → 操作按钮 → 滑到「快捷指令」→ 选择「开始或停止录像」。\n"
+                         + "之后按一下操作按钮就开始录像（并进入黑屏隐身），再按一下停止。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("快捷指令 / 操作按钮")
+                }
+
                 Section("存储") {
                     LabeledContent("已占用", value: RecordingLibrary.formattedSize(library.totalSizeBytes))
                     LabeledContent("设备可用空间", value: RecordingLibrary.formattedSize(library.freeDiskSpaceBytes()))

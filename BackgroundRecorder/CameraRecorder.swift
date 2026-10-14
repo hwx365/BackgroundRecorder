@@ -76,6 +76,8 @@ final class CameraRecorder: NSObject, ObservableObject {
         self.library = library
         self.settings = settings
         super.init()
+        // 注册给快捷指令 / 操作按钮使用
+        RecorderBridge.shared.recorder = self
         registerObservers()
         RecorderDiagnostics.shared.log(
             "=== CameraRecorder 初始化 | 纯视频 | 画质=\(settings.quality.title) | 分段=\(settings.segment.title) ==="
@@ -144,6 +146,16 @@ final class CameraRecorder: NSObject, ObservableObject {
             RecorderDiagnostics.shared.log("用户开始录制（分段模式：\(settings.segment.title)）")
             startNextSegment()
         }
+    }
+
+    /// 供快捷指令 / 操作按钮调用：确保采集会话就绪后再开始录制。
+    /// 冷启动（App 刚被操作按钮唤起）时，ContentView 的初始化可能还没跑完，
+    /// 这里先幂等地把会话拉起来。
+    func startRecordingFromShortcut() {
+        guard !isRecording else { return }
+        RecorderDiagnostics.shared.log("快捷指令触发开始录制")
+        startSession()
+        toggleRecording()
     }
 
     /// 用户主动停止。会终止整段持续会话，不再自动续录。
