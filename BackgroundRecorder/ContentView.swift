@@ -24,7 +24,7 @@ struct ContentView: View {
             Color.black.ignoresSafeArea()
 
             if permissionGranted {
-                CameraPreviewView(displayLayer: recorder.previewLayer)
+                CameraPreviewView(session: recorder.session)
                     .ignoresSafeArea()
                     .overlay(alignment: .top) { topFade }
             } else if permissionChecked {
@@ -163,10 +163,10 @@ struct ContentView: View {
             Image(systemName: "video.slash.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(.secondary)
-            Text("需要相机与麦克风权限")
+            Text("需要相机权限")
                 .font(.headline)
                 .foregroundStyle(.white)
-            Text("请在「设置 → 隐私与安全性」中开启相机和麦克风权限后重新打开 App。")
+            Text("本 App 只录像、不录音。请在「设置 → 隐私与安全性」中开启相机权限后重新打开 App。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -204,11 +204,10 @@ struct ContentView: View {
     }
 
     private func bootstrap() async {
-        if CameraRecorder.hasPermissions {
+        if CameraRecorder.hasCameraPermission {
             permissionGranted = true
         } else {
-            let result = await CameraRecorder.requestPermissions()
-            permissionGranted = result.camera && result.microphone
+            permissionGranted = await CameraRecorder.requestCameraPermission()
         }
         permissionChecked = true
 

@@ -2,45 +2,31 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
-/// 承载 `AVSampleBufferDisplayLayer` 的容器视图。
-///
-/// 该层身兼两职：
-/// 1. App 内的全屏实时预览（替代 AVCaptureVideoPreviewLayer）；
-/// 2. 画中画（PiP）的内容源 —— 这是换掉 previewLayer 的真正原因：
-///    `AVCaptureVideoPreviewLayer` 不能作为 PiP 内容源，成熟后台录像 App
-///    都用 sample buffer 显示层 + 视频数据输出来喂帧。
-final class SampleBufferContainerView: UIView {
+/// 直接拿 `AVCaptureVideoPreviewLayer` 当 view 的 backing layer：
+/// 由系统原生合成，性能比逐帧喂 sample buffer 好得多。
+final class PreviewContainerView: UIView {
+    override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
-    var contentLayer: CALayer? {
-        didSet {
-            if let contentLayer, contentLayer.superlayer !== layer {
-                layer.addSublayer(contentLayer)
-                setNeedsLayout()
-            }
-        }
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        contentLayer?.frame = bounds
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        // swiftlint:disable:next force_cast
+        layer as! AVCaptureVideoPreviewLayer
     }
 }
 
 struct CameraPreviewView: UIViewRepresentable {
+    let session: AVCaptureSession
 
-    let displayLayer: AVSampleBufferDisplayLayer
-
-    func makeUIView(context: Context) -> SampleBufferContainerView {
-        let view = SampleBufferContainerView()
+    func makeUIView(context: Context) -> PreviewContainerView {
+        let view = PreviewContainerView()
         view.backgroundColor = .black
-        displayLayer.videoGravity = .resizeAspectFill
-        view.contentLayer = displayLayer
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
         return view
     }
 
-    func updateUIView(_ uiView: SampleBufferContainerView, context: Context) {
-        if uiView.contentLayer !== displayLayer {
-            uiView.contentLayer = displayLayer
+    func updateUIView(_ uiView: PreviewContainerView, context: Context) {
+        if uiView.previewLayer.session !== session {
+            uiView.previewLayer.session = session
         }
     }
 }
