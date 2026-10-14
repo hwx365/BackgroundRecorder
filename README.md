@@ -1,4 +1,4 @@
-# BackgroundRecorder · iPhone 录像 App
+# 黑色相机 · iPhone 录像 App
 
 一个用 SwiftUI + AVFoundation 写的录像 App：支持**录音（可开关）**、循环分段、中断自动续录、
 快捷指令 / 操作按钮触发；录制期间屏幕自动压到接近全黑（看起来像待机），适合长时间连续录制。
@@ -162,7 +162,7 @@ python tools/gh_api_push.py          # 默认推 hwx365/BackgroundRecorder 的 m
 6. 想验证自动续录：录制中切走 1 分钟再回来，列表里应出现「第 2 段」文件，日志中会有
    `回前台自动续录 -> 第 2 段`
 
-**诊断日志**（`文件` App → 我的 iPhone → 后台录像 → `diagnostics.log`）会记录每次
+**诊断日志**（`文件` App → 我的 iPhone → 黑色相机 → `diagnostics.log`）会记录每次
 前后台切换、中断原因、会话启停，排查问题看这里最快。
 
 ---
