@@ -14,6 +14,21 @@ final class RecorderBridge {
 }
 
 /// 快捷指令 / 操作按钮的执行入口。
+///
+/// ## 为什么这里「只做事、不说话」
+///
+/// 三个 Intent 的 `perform()` 都刻意**不返回 dialog**，也不遵循 `ProvidesDialog`。
+///
+/// 因为 dialog 会让系统在屏幕上弹一条提示（「已开始录像。」），而从「操作按钮」触发的
+/// 场景本来就是不想看屏幕 —— 弹出提示既多余，又会在进入黑屏隐身的瞬间把屏幕照亮，
+/// 把隐身效果破坏掉。
+///
+/// 代价是**失败时也静默**。所以每一条结果都写进 `diagnostics.log`，
+/// 需要排查时去「文件」App 里看（路径见 README）。
+///
+/// 另外：App 切到前台本身就是最直接的反馈 —— 成功则屏幕变黑（进入隐身），
+/// 失败则停在明亮的常规界面。
+///
 /// 统一在主线程上操作录像器（App Intent 的 perform 在后台上下文，需要显式切回）。
 @MainActor
 enum RecordingShortcutRunner {
@@ -27,48 +42,58 @@ enum RecordingShortcutRunner {
         return nil
     }
 
-    static func start() async -> String {
+    static func start() async {
         guard let recorder = await readyRecorder() else {
-            return "录像器还没准备好，请先手动打开一次 App。"
+            RecorderDiagnostics.shared.log("快捷指令 | 开始录像被忽略：录像器未就绪")
+            return
         }
         guard CameraRecorder.hasCameraPermission else {
-            return "无法开始录像：还没有相机权限，请先打开 App 完成授权。"
+            RecorderDiagnostics.shared.log("快捷指令 | 开始录像被忽略：没有相机权限")
+            return
         }
         guard !recorder.isRecording else {
-            return "已经在录像了。"
+            RecorderDiagnostics.shared.log("快捷指令 | 开始录像被忽略：已在录制中")
+            return
         }
         recorder.startRecordingFromShortcut()
-        return "已开始录像。"
+        RecorderDiagnostics.shared.log("快捷指令 | 开始录像")
     }
 
-    static func stop() async -> String {
+    static func stop() async {
         guard let recorder = await readyRecorder() else {
-            return "录像器还没准备好，请先手动打开一次 App。"
+            RecorderDiagnostics.shared.log("快捷指令 | 停止录像被忽略：录像器未就绪")
+            return
         }
         guard recorder.isRecording else {
-            return "当前没有在录像。"
+            RecorderDiagnostics.shared.log("快捷指令 | 停止录像被忽略：当前没有在录制")
+            return
         }
         recorder.stopRecordingByUser()
-        return "已停止录像。"
+        RecorderDiagnostics.shared.log("快捷指令 | 停止录像")
     }
 
-    static func toggle() async -> String {
+    static func toggle() async {
         guard let recorder = await readyRecorder() else {
-            return "录像器还没准备好，请先手动打开一次 App。"
+            RecorderDiagnostics.shared.log("快捷指令 | 切换被忽略：录像器未就绪")
+            return
         }
         if recorder.isRecording {
             recorder.stopRecordingByUser()
-            return "已停止录像。"
+            RecorderDiagnostics.shared.log("快捷指令 | 切换 → 停止录像")
+            return
         }
         guard CameraRecorder.hasCameraPermission else {
-            return "无法开始录像：还没有相机权限，请先打开 App 完成授权。"
+            RecorderDiagnostics.shared.log("快捷指令 | 切换被忽略：没有相机权限")
+            return
         }
         recorder.startRecordingFromShortcut()
-        return "已开始录像。"
+        RecorderDiagnostics.shared.log("快捷指令 | 切换 → 开始录像")
     }
 }
 
 // MARK: - 三个动作
+//
+// 全部只返回 `.result()`，不带 dialog —— 原因见文件顶部。
 
 struct StartRecordingIntent: AppIntent {
     static var title: LocalizedStringResource = "开始录像"
@@ -76,9 +101,9 @@ struct StartRecordingIntent: AppIntent {
     /// 摄像头只能在前台使用，所以要求把 App 带到前台
     static var openAppWhenRun: Bool = true
 
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        let message = await RecordingShortcutRunner.start()
-        return .result(dialog: "\(message)")
+    func perform() async throws -> some IntentResult {
+        await RecordingShortcutRunner.start()
+        return .result()
     }
 }
 
@@ -87,9 +112,9 @@ struct StopRecordingIntent: AppIntent {
     static var description: IntentDescription? = IntentDescription("停止当前正在进行的录像。")
     static var openAppWhenRun: Bool = true
 
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        let message = await RecordingShortcutRunner.stop()
-        return .result(dialog: "\(message)")
+    func perform() async throws -> some IntentResult {
+        await RecordingShortcutRunner.stop()
+        return .result()
     }
 }
 
@@ -101,9 +126,9 @@ struct ToggleRecordingIntent: AppIntent {
     )
     static var openAppWhenRun: Bool = true
 
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        let message = await RecordingShortcutRunner.toggle()
-        return .result(dialog: "\(message)")
+    func perform() async throws -> some IntentResult {
+        await RecordingShortcutRunner.toggle()
+        return .result()
     }
 }
 
