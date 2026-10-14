@@ -50,6 +50,18 @@ def git(*args):
     return run(["git", *args]).strip()
 
 
+def git_bytes(*args):
+    """取原始字节。文件内容必须从 git 对象库读，不能读工作区：
+    Windows 工作区可能是 CRLF，而仓库里存的是 LF，直接读会让 blob 内容不一致。"""
+    result = subprocess.run(["git", *args], capture_output=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"命令失败: git {' '.join(args)}\n"
+            f"{result.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    return result.stdout
+
+
 def api(method, path, body=None):
     """调用 gh api，body 为 None 时是 GET。"""
     args = ["gh", "api", "-X", method, path]
@@ -103,9 +115,9 @@ def main():
     for line in stage_lines:
         # 格式: <mode> <sha> <stage>\t<path>
         meta, path = line.split("\t", 1)
-        mode = meta.split()[0]
-        with open(path, "rb") as handle:
-            content = base64.b64encode(handle.read()).decode("ascii")
+        mode, blob_sha = meta.split()[0], meta.split()[1]
+        # 从对象库读，保证与 git 内部存储的字节完全一致
+        content = base64.b64encode(git_bytes("cat-file", "blob", blob_sha)).decode("ascii")
         blob = api("POST", f"/repos/{repo}/git/blobs",
                    {"content": content, "encoding": "base64"})
         tree_entries.append({
