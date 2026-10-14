@@ -3,7 +3,7 @@ import Combine
 import CoreMedia
 import UIKit
 
-/// 摄像头录像器 —— 纯视频、支持循环分段与中断续录。
+/// 摄像头录像器 —— 支持录音（可开关）、循环分段与中断续录。
 ///
 /// ## 为什么不做「后台录像」
 /// iPhone 上第三方 App **无法**在切到其他 App 后继续使用摄像头：系统会在 App
@@ -38,6 +38,10 @@ final class CameraRecorder: NSObject, ObservableObject {
     @Published private(set) var segmentIndex = 0
     @Published private(set) var torchAvailable = false
     @Published private(set) var torchOn = false
+    /// 当前是否真的在采集声音（设置开启 且 麦克风已授权）
+    @Published private(set) var audioRecordingEnabled = false
+    /// 用户开启了录音，但麦克风权限被拒绝
+    @Published private(set) var microphoneDenied = false
     /// 自动降画质的说明，nil 表示未降级
     @Published private(set) var downgradeNotice: String?
     /// 存储相关提示（自动清理 / 空间不足）
@@ -54,6 +58,7 @@ final class CameraRecorder: NSObject, ObservableObject {
     private let settings: RecordingSettings
 
     private var videoInput: AVCaptureDeviceInput?
+    private var audioInput: AVCaptureDeviceInput?
 
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var durationTimer: Timer?
@@ -80,7 +85,7 @@ final class CameraRecorder: NSObject, ObservableObject {
         RecorderBridge.shared.recorder = self
         registerObservers()
         RecorderDiagnostics.shared.log(
-            "=== CameraRecorder 初始化 | 纯视频 | 画质=\(settings.quality.title) | 分段=\(settings.segment.title) ==="
+            "=== CameraRecorder 初始化 | 录音=\(settings.recordAudio) | 画质=\(settings.quality.title) | 分段=\(settings.segment.title) ==="
         )
     }
 
@@ -88,14 +93,22 @@ final class CameraRecorder: NSObject, ObservableObject {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
-    // MARK: - 权限（只需要相机）
+    // MARK: - 权限
 
     static func requestCameraPermission() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .video)
     }
 
+    static func requestMicrophonePermission() async -> Bool {
+        await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
     static var hasCameraPermission: Bool {
         AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+    }
+
+    static var hasMicrophonePermission: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
     // MARK: - 会话
@@ -175,6 +188,8 @@ final class CameraRecorder: NSObject, ObservableObject {
             // 会话可能刚被中断过，先确保在跑
             if !self.session.isRunning { self.session.startRunning() }
             self.applyPresetIfNeeded()
+            // 录音开关或麦克风权限可能刚变过，开新分段前同步一次
+            self.updateAudioInputLocked()
             DispatchQueue.main.async { self.beginSegment() }
         }
     }
@@ -210,7 +225,7 @@ final class CameraRecorder: NSObject, ObservableObject {
             movieOutput.startRecording(to: url, recordingDelegate: self)
 
             RecorderDiagnostics.shared.log(
-                "开始录制第 \(segmentIndex) 段 -> \(url.lastPathComponent) | 剩余空间 \(RecordingLibrary.formattedSize(free))"
+                "开始录制第 \(segmentIndex) 段 -> \(url.lastPathComponent) | 录音=\(audioRecordingEnabled) | 剩余空间 \(RecordingLibrary.formattedSize(free))"
             )
 
             idleTimerWasDisabled = UIApplication.shared.isIdleTimerDisabled
@@ -349,7 +364,7 @@ final class CameraRecorder: NSObject, ObservableObject {
         session.beginConfiguration()
         session.sessionPreset = settings.quality.preset
 
-        // 只加视频输入：不采集音频，录出的 .mov 里没有音轨
+        // 视频输入
         if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
            let input = try? AVCaptureDeviceInput(device: device),
            session.canAddInput(input) {
@@ -372,9 +387,59 @@ final class CameraRecorder: NSObject, ObservableObject {
         session.commitConfiguration()
 
         RecorderDiagnostics.shared.log(
-            "会话配置完成 | 视频输入=\(videoInput != nil) 音频输入=false（纯视频）| preset=\(session.sessionPreset.rawValue)"
+            "会话配置完成 | 视频输入=\(videoInput != nil) | preset=\(session.sessionPreset.rawValue)"
         )
         refreshTorchAvailability()
+
+        // 麦克风输入按「设置开关 + 系统权限」决定（内部会另起一次配置）
+        updateAudioInputLocked()
+    }
+
+    // MARK: - 录音（可开关）
+
+    /// 设置界面改了录音开关、或系统权限变化后调用
+    func applyAudioSetting() {
+        sessionQueue.async { [weak self] in
+            self?.updateAudioInputLocked()
+        }
+    }
+
+    /// 必须在 sessionQueue 上调用，且不能在录制过程中改动音频输入
+    private func updateAudioInputLocked() {
+        guard !movieOutput.isRecording else { return }
+
+        let authorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let wantAudio = settings.recordAudio && authorized
+
+        if wantAudio, audioInput == nil {
+            guard let device = AVCaptureDevice.default(for: .audio),
+                  let input = try? AVCaptureDeviceInput(device: device),
+                  session.canAddInput(input) else {
+                RecorderDiagnostics.shared.log("接入麦克风失败")
+                publishAudioState(enabled: false, denied: false)
+                return
+            }
+            session.beginConfiguration()
+            session.addInput(input)
+            session.commitConfiguration()
+            audioInput = input
+            RecorderDiagnostics.shared.log("已接入麦克风：录像将包含声音")
+        } else if !wantAudio, let existing = audioInput {
+            session.beginConfiguration()
+            session.removeInput(existing)
+            session.commitConfiguration()
+            audioInput = nil
+            RecorderDiagnostics.shared.log("已移除麦克风：本次为纯视频录制")
+        }
+
+        publishAudioState(enabled: audioInput != nil, denied: settings.recordAudio && !authorized)
+    }
+
+    private func publishAudioState(enabled: Bool, denied: Bool) {
+        DispatchQueue.main.async {
+            self.audioRecordingEnabled = enabled
+            self.microphoneDenied = denied
+        }
     }
 
     private func configureFrameRate(for device: AVCaptureDevice, target: Double) {
@@ -517,6 +582,8 @@ final class CameraRecorder: NSObject, ObservableObject {
 
         sessionQueue.async { [weak self] in
             guard let self else { return }
+            // 用户可能刚在系统设置里改了麦克风权限，回前台时重新同步
+            self.updateAudioInputLocked()
             if !self.session.isRunning {
                 RecorderDiagnostics.shared.log("会话已停止，回前台后重启")
                 self.session.startRunning()

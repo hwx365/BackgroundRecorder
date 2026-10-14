@@ -28,10 +28,12 @@
 	<true/>
 
 	<!-- 权限说明：缺对应条目时，申请该权限会让 App 直接崩溃。
-	     本 App 只录像、不录音，因此刻意不声明麦克风权限，
-	     也不声明任何 UIBackgroundModes（iPhone 上无法后台使用摄像头）。 -->
+	     麦克风用于录像时同步收音，可在 App 设置里关闭。
+	     刻意不声明任何 UIBackgroundModes —— iPhone 上第三方 App 无法在后台使用摄像头。 -->
 	<key>NSCameraUsageDescription</key>
 	<string>需要使用摄像头进行视频录制</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于在录像时同步录制声音，可在 App 设置里关闭</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于把录制完成的视频保存到系统相册</string>
 

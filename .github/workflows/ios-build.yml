@@ -40,14 +40,13 @@ jobs:
           plutil -p "$PLIST" > /tmp/info.txt
           cat /tmp/info.txt
           fail=0
-          for k in NSCameraUsageDescription NSPhotoLibraryAddUsageDescription; do
+          for k in NSCameraUsageDescription NSMicrophoneUsageDescription NSPhotoLibraryAddUsageDescription; do
             grep -q "$k" /tmp/info.txt || { echo "ERROR: 缺少 $k"; fail=1; }
           done
-          # 纯视频 App：不应声明麦克风权限，也不应声明任何后台模式
-          grep -q 'NSMicrophoneUsageDescription' /tmp/info.txt && { echo "ERROR: 纯视频模式不应声明 NSMicrophoneUsageDescription"; fail=1; }
-          grep -q 'UIBackgroundModes' /tmp/info.txt && { echo "ERROR: 纯视频模式不应声明 UIBackgroundModes"; fail=1; }
+          # 不声明任何后台模式：iPhone 上第三方 App 无法在后台使用摄像头
+          grep -q 'UIBackgroundModes' /tmp/info.txt && { echo "ERROR: 不应声明 UIBackgroundModes"; fail=1; }
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "Info.plist 校验通过（纯视频：仅相机权限，无麦克风、无后台模式）"
+          echo "Info.plist 校验通过（相机 + 麦克风 + 相册，无后台模式）"
 
       - name: Build (no codesign)
         run: |

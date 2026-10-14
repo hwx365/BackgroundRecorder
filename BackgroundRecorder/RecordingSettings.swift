@@ -106,6 +106,9 @@ final class RecordingSettings: ObservableObject {
     @Published var segment: SegmentLength { didSet { save() } }
     @Published var storageLimit: StorageLimit { didSet { save() } }
 
+    /// 是否录制声音（需要麦克风权限）。关闭后录出的是无音轨的纯视频
+    @Published var recordAudio: Bool { didSet { save() } }
+
     /// 隐身模式：录制时全屏纯黑 + 亮度归零，长按才能停止
     @Published var stealthMode: Bool { didSet { save() } }
     /// 被系统中断后，回到前台自动接着录（新起一段）
@@ -116,6 +119,7 @@ final class RecordingSettings: ObservableObject {
     private let defaults: UserDefaults
 
     private enum Keys {
+        static let recordAudio = "settings.recordAudio"
         static let quality = "settings.quality"
         static let segment = "settings.segment"
         static let storageLimit = "settings.storageLimit"
@@ -145,6 +149,7 @@ final class RecordingSettings: ObservableObject {
             storageLimit = .fiveGB
         }
 
+        self.recordAudio = defaults.object(forKey: Keys.recordAudio) as? Bool ?? true
         self.quality = quality
         self.segment = segment
         self.storageLimit = storageLimit
@@ -154,6 +159,7 @@ final class RecordingSettings: ObservableObject {
     }
 
     private func save() {
+        defaults.set(recordAudio, forKey: Keys.recordAudio)
         defaults.set(quality.rawValue, forKey: Keys.quality)
         defaults.set(segment.rawValue, forKey: Keys.segment)
         defaults.set(storageLimit.rawValue, forKey: Keys.storageLimit)

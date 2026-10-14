@@ -42,13 +42,15 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("录制声音", isOn: $settings.recordAudio)
                     Toggle("隐身模式", isOn: $settings.stealthMode)
                     Toggle("中断后自动续录", isOn: $settings.autoResume)
                     Toggle("低电量 / 过热自动降画质", isOn: $settings.autoDowngrade)
                 } header: {
                     Text("录制行为")
                 } footer: {
-                    Text("隐身模式：录制时屏幕全黑、亮度归零，轻点唤出控件，长按 1.2 秒停止。\n"
+                    Text("录制声音：关闭后录出的是没有音轨的纯视频（需要麦克风权限）。\n"
+                         + "隐身模式：录制时屏幕全黑、亮度归零，轻点唤出控件，长按 1.2 秒停止。\n"
                          + "中断后自动续录：被来电或其它 App 打断后，回到本 App 会自动接着录新的一段。")
                 }
 

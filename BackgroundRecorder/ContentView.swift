@@ -61,6 +61,7 @@ struct ContentView: View {
         .onChange(of: controlsRevealed) { _, _ in applyBrightness() }
         .onChange(of: settings.stealthMode) { _, _ in applyBrightness() }
         .onChange(of: settings.quality) { _, _ in recorder.applyQualitySetting() }
+        .onChange(of: settings.recordAudio) { _, _ in recorder.applyAudioSetting() }
         .sheet(isPresented: $showLibrary) {
             RecordingListView(library: library)
         }
@@ -197,10 +198,14 @@ struct ContentView: View {
             if let notice = recorder.storageNotice {
                 noticeRow(notice, icon: "externaldrive.badge.exclamationmark", color: .yellow)
             }
+            if recorder.microphoneDenied {
+                noticeRow("未授予麦克风权限：本次只录画面、没有声音", icon: "mic.slash.fill", color: .orange)
+            }
         }
         .padding(.top, 10)
         .animation(.snappy, value: recorder.downgradeNotice)
         .animation(.snappy, value: recorder.storageNotice)
+        .animation(.snappy, value: recorder.microphoneDenied)
     }
 
     private func noticeRow(_ text: String, icon: String, color: Color) -> some View {
@@ -335,6 +340,10 @@ struct ContentView: View {
             permissionGranted = true
         } else {
             permissionGranted = await CameraRecorder.requestCameraPermission()
+        }
+        // 开了录音就顺带申请麦克风权限；被拒绝也不影响录像，只是没有声音
+        if settings.recordAudio, !CameraRecorder.hasMicrophonePermission {
+            _ = await CameraRecorder.requestMicrophonePermission()
         }
         permissionChecked = true
 
