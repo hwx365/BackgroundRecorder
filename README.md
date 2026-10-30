@@ -3,6 +3,10 @@
 一个用 SwiftUI + AVFoundation 写的录像 App：支持**录音（可开关）**、循环分段、中断自动续录、
 快捷指令 / 操作按钮触发；录制期间屏幕自动压到接近全黑（看起来像待机），适合长时间连续录制。
 
+> **要在没有 Mac 的电脑上出包并装到 iPhone？** 看
+> [`docs/BUILD-AND-SIDELOAD.md`](docs/BUILD-AND-SIDELOAD.md) —— 一条命令跑完
+> 提交 → 推送 → CI 编译 → 下载校验 ipa 的全流程。
+
 ---
 
 ## 一、先说清楚能力边界（重要）
