@@ -102,10 +102,10 @@ def gh(*args, check=True):
     return run([GH, *args], check=check)
 
 
-def gh_json(*args):
+def gh_json(*args, check=True):
     import json
 
-    out = gh(*args).stdout.strip()
+    out = gh(*args, check=check).stdout.strip()
     return json.loads(out) if out else []
 
 
@@ -142,16 +142,48 @@ def commit_if_needed(message: str | None) -> None:
 
 
 def push() -> str:
+    """返回**远端**的 commit sha —— 后续匹配 CI 运行必须用它。"""
     step("2/6  推送到 GitHub（走 REST API，不用 git push）")
 
-    result = run([sys.executable, "tools/gh_api_push.py"], check=False)
-    output = (result.stdout or "") + (result.stderr or "")
-    for line in output.strip().splitlines():
-        print("  " + line)
+    # 子进程也要按 UTF-8 输出，否则中文会被父进程按 UTF-8 解码成乱码
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    result = subprocess.run(
+        [sys.executable, "tools/gh_api_push.py"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    lines = ((result.stdout or "") + (result.stderr or "")).strip().splitlines()
+
     if result.returncode != 0:
+        for line in lines[-20:]:
+            print("  " + line)
         raise SystemExit("推送失败，排查：gh auth status / 网络 / 杀软是否拦截")
 
-    return run(["git", "rev-parse", "HEAD"]).stdout.strip()
+    # 只摘关键行：逐文件上传的流水账有几十行，没必要都打出来
+    keys = ("本地 HEAD", "提交信息", "远端", "tree:", "commit:", "REMOTE_SHA=", "推送完成")
+    for line in lines:
+        if line.startswith(keys):
+            print("  " + line)
+
+    remote_sha = next(
+        (line.split("=", 1)[1].strip() for line in lines if line.startswith("REMOTE_SHA=")),
+        None,
+    )
+    local_sha = run(["git", "rev-parse", "HEAD"]).stdout.strip()
+
+    if not remote_sha:
+        print("  （推送脚本没给出远端 sha，回退用本地 HEAD）")
+        return local_sha
+
+    if remote_sha != local_sha:
+        # 两边都用本方式推送时，父提交不同，commit sha 必然不同。属正常。
+        print("  提示：远端 commit 与本地不同（历史已分叉，属正常现象）")
+        print("        后续按远端 sha 去匹配 CI 运行")
+    return remote_sha
 
 
 def wait_for_run(repo: str, sha: str, timeout_minutes: int) -> int:

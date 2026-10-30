@@ -156,6 +156,10 @@ def main():
 
     print("推送完成。")
     print(f"  sha 与本地一致: {commit['sha'] == local_sha}")
+    # 机器可读输出：rebuild.py 靠这一行拿到「远端真正的 sha」去匹配 CI 运行。
+    # 本地的 commit 链与远端可能早已分叉（都用本方式推送时父提交不同），
+    # 所以不能拿本地 sha 去找 GitHub Actions，必须用远端返回的这个。
+    print(f"REMOTE_SHA={commit['sha']}")
 
 
 if __name__ == "__main__":
